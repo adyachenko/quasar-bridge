@@ -511,6 +511,8 @@ func TestDeferredActionRejectedBeforeAnyCall(t *testing.T) {
 		{"under_a_minute", "script.delayed_action", with(func(a *Action) { a.AfterMinutes = 0.4 })},
 		{"bad_hour", "script.delayed_action", with(func(a *Action) { a.At = "25:00" })},
 		{"seconds", "script.delayed_action", with(func(a *Action) { a.At = "23:00:00" })},
+		{"cancel_without_delay_script", "", with(func(a *Action) { a.Cancel = true })},
+		{"cancel_with_timing", "script.delayed_action", with(func(a *Action) { a.Cancel = true; a.AfterMinutes = 30 })},
 		{"service_not_allowed", "script.delayed_action", with(func(a *Action) { a.Service = "media_play"; a.AfterMinutes = 30 })},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -546,7 +548,7 @@ func TestTurnOnForAWhileIsNotOverlap(t *testing.T) {
 }
 
 func TestCancelDelayedStopsScriptWithoutPlanner(t *testing.T) {
-	for _, text := range []string{"Отмени отложенные команды", "Сбрось отложенное выключение телевизора", "Удали отложенные действия"} {
+	for _, text := range []string{"Отмени отложенные команды", "Сбрось все отложенные", "Удали отложенные действия"} {
 		f := newDelayFixture()
 		c := Controller{Tools: f, Domains: []string{"light"}, DelayScript: "script.delayed_action", Planner: plannerFunc(func(context.Context, []llm.Message, bool) (string, error) {
 			t.Fatalf("%q: planner called for cancellation", text)
@@ -765,5 +767,21 @@ func TestHomeFollowupPreservesOriginalRequestAndRoomScope(t *testing.T) {
 	}
 	if !slices.Equal(searched, []string{"light", "switch"}) || !slices.Equal(acted, []string{entities[0].ID, entities[1].ID}) {
 		t.Fatalf("searched domains=%v actions=%v", searched, acted)
+	}
+}
+
+func TestCancelNamedDeferredActionGoesThroughPlanner(t *testing.T) {
+	f := newDelayFixture()
+	c := Controller{Tools: f, Domains: []string{"media_player"}, DelayScript: "script.delayed_action", Planner: planOf(
+		Action{Domain: "media_player", Service: "turn_off", EntityID: "media_player.tv", Cancel: true},
+	)}
+	answer, err := c.Handle(t.Context(), "Сбрось отложенное выключение телевизора")
+	if err != nil || answer != "Отменяю отложенное: Телевизор." || len(f.calls) != 1 {
+		t.Fatalf("answer=%q err=%v calls=%v", answer, err, f.calls)
+	}
+	raw, _ := json.Marshal(f.calls[0], json.Deterministic(true))
+	want := `{"data":{"variables":{"cancel":true,"entity_id":"media_player.tv","service":"media_player.turn_off"}},"domain":"script","entity_id":"script.delayed_action","service":"turn_on","wait":false}`
+	if string(raw) != want {
+		t.Fatalf("call=%s", raw)
 	}
 }
