@@ -585,6 +585,7 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 				slog.Warn("native_recovery_failed", "request", requestTag(p.id), "error", err)
 				result.Answer = "Не удалось запланировать аварийное восстановление. Проверьте журнал Quasar Bridge и выполните восстановление по SSH."
 			} else if result.Route == "home" {
+				slog.Warn("native_home_failed", "request", requestTag(p.id), "error", err)
 				result.Answer = "Не удалось подтвердить выполнение команды в умном доме."
 			} else if result.Route == "airplay" {
 				result.Answer = "Не удалось изменить состояние AirPlay. Проверьте журнал Quasar Bridge."
