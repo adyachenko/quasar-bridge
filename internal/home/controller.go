@@ -44,6 +44,8 @@ type Entity struct {
 	Area    string   `json:"area"`
 	Aliases []string `json:"aliases"`
 	Members []string `json:"member_entity_ids,omitempty"`
+	// CleanAreas lists the areas a vacuum can clean with vacuum.clean_area.
+	CleanAreas []CleanArea `json:"clean_areas,omitempty"`
 }
 type Action struct {
 	Domain   string         `json:"domain"`
@@ -62,7 +64,7 @@ var serviceFields = map[string][]string{
 	"climate.set_temperature": {"temperature", "hvac_mode"}, "climate.set_hvac_mode": {"hvac_mode"}, "climate.turn_off": {}, "climate.turn_on": {},
 	"cover.open_cover": {}, "cover.close_cover": {}, "cover.stop_cover": {}, "cover.set_cover_position": {"position"},
 	"fan.turn_on": {"percentage"}, "fan.turn_off": {}, "fan.set_percentage": {"percentage"},
-	"vacuum.start": {}, "vacuum.pause": {}, "vacuum.stop": {}, "vacuum.return_to_base": {},
+	"vacuum.start": {}, "vacuum.pause": {}, "vacuum.stop": {}, "vacuum.return_to_base": {}, "vacuum.clean_area": {"cleaning_area_id"},
 	"media_player.turn_off": {}, "media_player.media_pause": {}, "media_player.media_stop": {}, "media_player.volume_set": {"volume_level"},
 }
 
@@ -184,7 +186,7 @@ func (c *Controller) Handle(ctx context.Context, text string) (string, error) {
 		services = append(services, name)
 	}
 	slices.Sort(services)
-	answer, err := c.Planner.Complete(ctx, []llm.Message{{Role: "system", Content: prompt + strings.Join(services, ", ")}, {Role: "user", Content: "Устройства: " + string(data) + "\nЗапрос: " + text}}, true)
+	answer, err := c.Planner.Complete(ctx, []llm.Message{{Role: "system", Content: prompt + strings.Join(services, ", ") + "." + cleanAreaHint(entities)}, {Role: "user", Content: "Устройства: " + string(data) + "\nЗапрос: " + text}}, true)
 	if err != nil {
 		return "", err
 	}
@@ -213,6 +215,9 @@ func (c *Controller) Handle(ctx context.Context, text string) (string, error) {
 			if !slices.Contains(fields, key) {
 				return "", errors.New("home service parameter not allowed")
 			}
+		}
+		if err := checkCleanAreas(a, e); err != nil {
+			return "", err
 		}
 	}
 	claimed := map[string]bool{}
@@ -351,7 +356,7 @@ func controlDomains(text string) []string {
 	if strings.Contains(s, "вентилятор") {
 		add("fan", "switch")
 	}
-	if strings.Contains(s, "пылесос") {
+	if strings.Contains(s, "пылесос") || strings.Contains(s, "уборк") || strings.Contains(s, "убери") {
 		add("vacuum")
 	}
 	if strings.Contains(s, "телевизор") {
@@ -404,7 +409,10 @@ func scopeEntities(text string, entities []Entity) []Entity {
 
 func (c *Controller) enrich(ctx context.Context, e Entity) (Entity, bool, error) {
 	exposed, err := c.exposed(ctx, e.ID, true)
-	return e, exposed, err
+	if err != nil || !exposed {
+		return e, exposed, err
+	}
+	return c.withCleanAreas(ctx, e), true, nil
 }
 func (c *Controller) exposed(ctx context.Context, id string, cached bool) (bool, error) {
 	c.exposureMu.Lock()
