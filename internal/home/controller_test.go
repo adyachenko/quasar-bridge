@@ -575,3 +575,29 @@ func TestSpokenMinutes(t *testing.T) {
 		}
 	}
 }
+
+func TestHomeTurnsOnMediaPlayer(t *testing.T) {
+	var calls []map[string]any
+	tools := toolFunc(func(_ context.Context, name string, args map[string]any) (jsontext.Value, error) {
+		var v any = map[string]any{"success": true}
+		switch name {
+		case "ha_search":
+			v = map[string]any{"entities": []Entity{{ID: "media_player.tv", Name: "Телевизор", State: "off"}}}
+		case "ha_get_entity_exposure":
+			v = map[string]any{"exposed_to": map[string]any{"conversation": true}}
+		case "ha_get_state":
+			v = map[string]any{"data": map[string]any{"state": "on"}}
+		case "ha_call_service":
+			calls = append(calls, args)
+		}
+		b, _ := json.Marshal(v)
+		return b, nil
+	})
+	c := Controller{Tools: tools, Domains: []string{"media_player"}, Planner: plannerFunc(func(context.Context, []llm.Message, bool) (string, error) {
+		return `{"answer":"","actions":[{"domain":"media_player","service":"turn_on","entity_id":"media_player.tv","data":{}}]}`, nil
+	})}
+	answer, err := c.Handle(t.Context(), "Включи телевизор")
+	if err != nil || answer == "" || len(calls) != 1 || calls[0]["domain"] != "media_player" || calls[0]["service"] != "turn_on" || calls[0]["entity_id"] != "media_player.tv" {
+		t.Fatalf("answer=%q err=%v calls=%v", answer, err, calls)
+	}
+}
