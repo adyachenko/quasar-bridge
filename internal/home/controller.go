@@ -63,7 +63,7 @@ var serviceFields = map[string][]string{
 	"cover.open_cover": {}, "cover.close_cover": {}, "cover.stop_cover": {}, "cover.set_cover_position": {"position"},
 	"fan.turn_on": {"percentage"}, "fan.turn_off": {}, "fan.set_percentage": {"percentage"},
 	"vacuum.start": {}, "vacuum.pause": {}, "vacuum.stop": {}, "vacuum.return_to_base": {},
-	"media_player.turn_off": {}, "media_player.media_pause": {}, "media_player.media_stop": {}, "media_player.volume_set": {"volume_level"},
+	"media_player.turn_on": {}, "media_player.turn_off": {}, "media_player.media_pause": {}, "media_player.media_stop": {}, "media_player.volume_set": {"volume_level"},
 }
 
 func (c *Controller) Entities(ctx context.Context) ([]Entity, error) {
