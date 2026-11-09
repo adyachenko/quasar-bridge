@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -183,7 +184,7 @@ func (c *Controller) Handle(ctx context.Context, text string) (string, error) {
 		return "Уточните комнату и тип устройства: найдено слишком много устройств.", nil
 	}
 	if stateQuestion(text) {
-		answer, err := c.Planner.Complete(ctx, []llm.Message{{Role: "system", Content: "Ответь на вопрос о состоянии умного дома по текущему списку HA. Только 1–2 коротких предложения по-русски. Никаких действий. Для освещения учитывай группы и отдельные светильники; переключатели Adaptive Lighting — настройки автоматики, а не источники света. unavailable/unknown означает отсутствие данных. Не придумывай значения и единицы измерения. Называй устройства по friendly_name, никогда не упоминай entity_id в ответе: его читают вслух." + areaHint}, {Role: "user", Content: "Устройства: " + string(data) + "\nВопрос: " + text}}, false)
+		answer, err := c.Planner.Complete(ctx, []llm.Message{{Role: "system", Content: "Ответь на вопрос о состоянии умного дома по текущему списку HA. Только 1–2 коротких предложения по-русски. Никаких действий. Для освещения учитывай группы и отдельные светильники; переключатели Adaptive Lighting — настройки автоматики, а не источники света. unavailable/unknown означает отсутствие данных. Не придумывай значения. Числа округляй до целых или десятых и пиши с запятой; единицу называй, только если она ясна из названия датчика: температура — градусы, влажность — проценты. Называй устройства по friendly_name, никогда не упоминай entity_id в ответе: его читают вслух." + areaHint}, {Role: "user", Content: "Устройства: " + string(data) + "\nВопрос: " + text}}, false)
 		if err != nil {
 			return "", err
 		}
@@ -331,10 +332,11 @@ func spokenAnswer(answer string, entities []Entity) string {
 		}
 		pairs = append(pairs, e.Name+" ("+e.ID+")", e.Name, " ("+e.ID+")", "", "("+e.ID+")", "", e.ID, e.Name)
 	}
-	if len(pairs) == 0 {
-		return answer
+	if len(pairs) > 0 {
+		answer = strings.NewReplacer(pairs...).Replace(answer)
 	}
-	return strings.NewReplacer(pairs...).Replace(answer)
+	// TTS reads "27.26" as a clock time; a decimal comma is read as a number.
+	return decimalPoint.ReplaceAllString(answer, "${1},${2}")
 }
 
 // wholeHome reports a request about the entire home, which the speaker's own
@@ -348,6 +350,8 @@ func wholeHome(text string) bool {
 	}
 	return false
 }
+
+var decimalPoint = regexp.MustCompile(`(\d)\.(\d)`)
 
 func controlDomains(text string) []string {
 	s := strings.ToLower(text)
