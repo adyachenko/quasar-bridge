@@ -57,6 +57,8 @@ type Entity struct {
 	Members []string `json:"member_entity_ids,omitempty"`
 	// Here marks devices in the speaker's own area for a request without a room.
 	Here bool `json:"here,omitzero"`
+	// CleanAreas lists the areas a vacuum can clean with vacuum.clean_area.
+	CleanAreas []CleanArea `json:"clean_areas,omitempty"`
 }
 type Action struct {
 	Domain   string         `json:"domain"`
@@ -94,7 +96,7 @@ var serviceFields = map[string][]string{
 	"climate.set_temperature": {"temperature", "hvac_mode"}, "climate.set_hvac_mode": {"hvac_mode"}, "climate.turn_off": {}, "climate.turn_on": {},
 	"cover.open_cover": {}, "cover.close_cover": {}, "cover.stop_cover": {}, "cover.set_cover_position": {"position"},
 	"fan.turn_on": {"percentage"}, "fan.turn_off": {}, "fan.set_percentage": {"percentage"},
-	"vacuum.start": {}, "vacuum.pause": {}, "vacuum.stop": {}, "vacuum.return_to_base": {},
+	"vacuum.start": {}, "vacuum.pause": {}, "vacuum.stop": {}, "vacuum.return_to_base": {}, "vacuum.clean_area": {"cleaning_area_id"},
 	"media_player.turn_on": {}, "media_player.turn_off": {}, "media_player.media_pause": {}, "media_player.media_stop": {}, "media_player.volume_set": {"volume_level"},
 }
 
@@ -239,7 +241,7 @@ func (c *Controller) handle(ctx context.Context, text, request, question string)
 		services = append(services, name)
 	}
 	slices.Sort(services)
-	prompt += strings.Join(services, ", ") + "." + areaHint
+	prompt += strings.Join(services, ", ") + "." + areaHint + cleanAreaHint(entities)
 	if c.DelayScript != "" {
 		prompt += ` Для отложенной команды («через 30 минут», «через час», «в 23:00») добавь в действие "after_minutes" — целое число минут от 1 до 1440 — или "at" — время "ЧЧ:ММ" в 24-часовом формате; у немедленного действия этих полей нет. «Включи на 10 минут» — немедленное включение и отложенное выключение того же устройства. Отмена отложенной команды («отмени включение света», «не выключай телевизор через час») — действие с отменяемым сервисом и "cancel": true, без after_minutes и at.`
 	}
@@ -272,6 +274,10 @@ func (c *Controller) handle(ctx context.Context, text, request, question string)
 			if !slices.Contains(fields, key) {
 				return "", errors.New("home service parameter not allowed")
 			}
+		}
+		// A cancellation names the service only; its rooms are not sent.
+		if err := checkCleanAreas(a, e); err != nil && !a.Cancel {
+			return "", err
 		}
 		if a.Cancel && (c.DelayScript == "" || a.AfterMinutes != 0 || a.At != "") {
 			return "", errors.New("home delay not allowed")
@@ -344,6 +350,11 @@ func (c *Controller) handle(ctx context.Context, text, request, question string)
 			switch {
 			case a.Cancel:
 				variables["cancel"] = true
+				// The planner cannot tell vacuum.start from vacuum.clean_area for
+				// "отмени отложенную уборку": cancel every pending run of the vacuum.
+				if a.Domain == "vacuum" {
+					variables["service"] = ""
+				}
 			case a.At != "":
 				variables["at"] = a.At
 			default:
@@ -523,7 +534,7 @@ func controlDomains(text string) []string {
 	if strings.Contains(s, "вентилятор") {
 		add("fan", "switch")
 	}
-	if strings.Contains(s, "пылесос") {
+	if strings.Contains(s, "пылесос") || strings.Contains(s, "уборк") || strings.Contains(s, "убери") {
 		add("vacuum")
 	}
 	if strings.Contains(s, "телевизор") {
@@ -614,7 +625,10 @@ func markDefaultArea(area string, entities []Entity) ([]Entity, string) {
 
 func (c *Controller) enrich(ctx context.Context, e Entity) (Entity, bool, error) {
 	exposed, err := c.exposed(ctx, e.ID, true)
-	return e, exposed, err
+	if err != nil || !exposed {
+		return e, exposed, err
+	}
+	return c.withCleanAreas(ctx, e), true, nil
 }
 func (c *Controller) exposed(ctx context.Context, id string, cached bool) (bool, error) {
 	c.exposureMu.Lock()
